@@ -5,6 +5,7 @@ public class SmokeProbe extends PluginBase {
   try {
    Object plugin=getServer().getPluginManager().getPlugin("tokaDiagnostics");
    if(plugin==null || !((PluginBase)plugin).isEnabled()) throw new Exception("not enabled");
+   if(!java.nio.file.Files.isDirectory(((PluginBase)plugin).getDataFolder().toPath().resolve("reports"))) throw new Exception("reports directory missing at startup");
    // Deliberately bypass construction to represent a pre-login Player with no UUID.
    // Unsafe is confined to this test fixture; production never uses it.
    var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
@@ -15,14 +16,15 @@ public class SmokeProbe extends PluginBase {
    incoming.invoke(plugin,new cn.nukkit.event.server.DataPacketReceiveEvent(pending,new cn.nukkit.network.protocol.LoginPacket()));
    var outgoing=plugin.getClass().getMethod("sent",cn.nukkit.event.server.DataPacketSendEvent.class);
    outgoing.invoke(plugin,new cn.nukkit.event.server.DataPacketSendEvent(pending,new cn.nukkit.network.protocol.UpdateBlockPacket()));
-   var finishPending=plugin.getClass().getDeclaredMethod("finish",UUID.class,String.class);finishPending.setAccessible(true);finishPending.invoke(plugin,null,"QUIT");
+   var finishPending=plugin.getClass().getDeclaredMethod("finish",cn.nukkit.Player.class,String.class);finishPending.setAccessible(true);finishPending.invoke(plugin,null,"QUIT");
    getLogger().info("PRELOGIN_NULL_UUID_PASS");
-   Class<?> type=Class.forName("dev.toka.diagnostics.Trace",true,plugin.getClass().getClassLoader());
-   var constructor=type.getDeclaredConstructor(int.class,long.class);constructor.setAccessible(true);
-   Object trace=constructor.newInstance(2,System.nanoTime()+10000000000L);
    var field=plugin.getClass().getDeclaredField("traces");field.setAccessible(true);
-   UUID id=UUID.randomUUID();((Map)field.get(plugin)).put(id,trace);
-   var finish=plugin.getClass().getDeclaredMethod("finish",UUID.class,String.class);finish.setAccessible(true);finish.invoke(plugin,id,"SMOKE");
+   if(((Map)field.get(plugin)).size()!=1) throw new Exception("automatic tracing failed");
+   cn.nukkit.Player second=(cn.nukkit.Player)unsafe.allocateInstance(cn.nukkit.Player.class);
+   incoming.invoke(plugin,new cn.nukkit.event.server.DataPacketReceiveEvent(second,new cn.nukkit.network.protocol.LoginPacket()));
+   if(((Map)field.get(plugin)).size()!=2) throw new Exception("prelogin connections must stay separate");
+   var finish=plugin.getClass().getDeclaredMethod("finish",cn.nukkit.Player.class,String.class);finish.setAccessible(true);finish.invoke(plugin,pending,"SMOKE");
+   finish.invoke(plugin,second,"SMOKE");
    getLogger().info("DIAGNOSTICS_SMOKE_PASS");
   } catch(Exception e) {getLogger().error("DIAGNOSTICS_SMOKE_FAIL",e);}
   getServer().getScheduler().scheduleDelayedTask(this,()->getServer().shutdown(),40);

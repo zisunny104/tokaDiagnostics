@@ -15,20 +15,39 @@ import java.util.concurrent.*;
 import java.util.zip.*;
 
 public final class Main extends PluginBase implements Listener {
-    private final Map<UUID, Trace> traces = new ConcurrentHashMap<>();
+    private final Map<Player, Trace> traces = Collections.synchronizedMap(new IdentityHashMap<>());
+    private final Map<Player, Boolean> completed = Collections.synchronizedMap(new IdentityHashMap<>());
+    private synchronized Trace traceFor(Player player) {
+        Trace current = traces.get(player);
+        if (current != null) return current;
+        if (traces.size() >= 2 || completed.containsKey(player)) return null;
+        Trace trace = new Trace(2048, System.nanoTime() + TimeUnit.SECONDS.toNanos(120));
+        trace.add("AUTO_START prelogin-capable");
+        traces.put(player, trace);
+        return trace;
+    }
     private final ThreadPoolExecutor writer = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
         new ArrayBlockingQueue<>(4), r -> { Thread t = new Thread(r, "tokaDiagnostics-export"); t.setDaemon(true); return t; });
+    private Map<Player, Trace> activeTraces() { synchronized (traces) { return new IdentityHashMap<>(traces); } }
     private Path reports;
     private String environment;
     @Override public void onEnable() {
         reports = getDataFolder().toPath().resolve("reports");
+        try { Files.createDirectories(reports); }
+        catch (java.io.IOException e) {
+            getLogger().error("無法建立診斷報告資料夾，插件停用：" + reports.toAbsolutePath(), e);
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        getLogger().info("診斷工具已就緒，報告路徑：" + reports.toAbsolutePath() + "；自動追蹤登入連線已啟用（最多兩位、每次 120 秒）。");
         environment = "core=" + getServer().getVersion() + "\njava=" + System.getProperty("java.version") + "\nplugins=" +
             getServer().getPluginManager().getPlugins().values().stream().map(p -> p.getName() + ":" + p.getDescription().getVersion()).sorted().toList() +
             "\nPacket events are observations, not proof of delivery. No raw payloads captured.\n";
         getServer().getPluginManager().registerEvents(this, this);
+        for (Player player : getServer().getOnlinePlayers().values()) traceFor(player);
         getServer().getScheduler().scheduleRepeatingTask(this, () -> {
-            for (var entry : traces.entrySet()) {
-                Player p = getServer().getPlayer(entry.getKey()).orElse(null);
+            for (var entry : activeTraces().entrySet()) {
+                Player p = entry.getKey();
                 if (p != null && p.getLevel() != null) entry.getValue().add("CONTEXT world=" + Trace.clean(p.getLevel().getFolderName()) + " xyz=" + p.getFloorX() + "," + p.getFloorY() + "," + p.getFloorZ());
                 if (System.nanoTime() >= entry.getValue().deadline) finish(entry.getKey(), "TIMEOUT");
             }
@@ -36,11 +55,17 @@ public final class Main extends PluginBase implements Listener {
     }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] a) {
         if (!sender.hasPermission("tokaDiagnostics.admin")) return true;
+        if (a.length == 0 || a[0].equalsIgnoreCase("status")) {
+            sender.sendMessage("診斷 " + getDescription().getVersion() + "；追蹤中：" + traces.size() + "/2；待寫入：" + writer.getQueue().size());
+            sender.sendMessage("報告路徑：" + reports.toAbsolutePath());
+            sender.sendMessage("自動追蹤：開啟；每條連線一次、120 秒、同時最多兩位。diag start 可手動再次追蹤。");
+            return true;
+        }
         if (a.length < 2) return false;
         Player p = getServer().getPlayerExact(a[1]);
-        if (p == null) { sender.sendMessage("請指定線上的玩家；離線時已自動匯出。"); return true; }
-        UUID id = p.getUniqueId();
-        if (id == null) { sender.sendMessage("玩家身分尚未初始化，請等登入完成再追蹤。"); return true; }
+        if (p == null) { sender.sendMessage("玩家不在線。只有先啟動追蹤才會在斷線時自動匯出；請檢查 reports 或登入後先執行 diag start。"); return true; }
+        Player id = p;
+
         switch (a[0].toLowerCase(Locale.ROOT)) {
             case "start": {
                 int seconds = 60;
@@ -54,17 +79,18 @@ public final class Main extends PluginBase implements Listener {
                 if (trace != null) trace.add("MARK " + String.join(" ", Arrays.copyOfRange(a, 2, a.length)));
                 sender.sendMessage(trace == null ? "尚未開始追蹤。" : "已加入標記（請勿輸入密碼）。"); break;
             }
-            case "export": finish(id, "MANUAL"); sender.sendMessage("已提交匯出；請查看後台的報告路徑。"); break;
+            case "export":
+                if (!traces.containsKey(id)) sender.sendMessage("這位玩家尚未開始追蹤，沒有資料可匯出。請先 diag start " + p.getName() + " 120。");
+                else { finish(id, "MANUAL"); sender.sendMessage("已提交匯出；請查看後台的報告路徑。"); }
+                break;
             default: return false;
         }
         return true;
     }
     private void packet(Player p, DataPacket packet, String direction, boolean cancelled) {
-        // Login and failed authentication can produce events before UUID assignment.
+        // A connection can produce events before UUID assignment.
         if (p == null || packet == null) return;
-        UUID id = p.getUniqueId();
-        if (id == null) return;
-        Trace trace = traces.get(id);
+        Trace trace = traceFor(p);
         if (trace == null) return;
         String detail = "";
         if (packet instanceof UpdateBlockPacket b) detail = " xyz=" + b.x + "," + b.y + "," + b.z + " runtime=" + b.blockRuntimeId + " layer=" + b.dataLayer + " flags=" + b.flags;
@@ -73,11 +99,13 @@ public final class Main extends PluginBase implements Listener {
     }
     @EventHandler(priority = EventPriority.MONITOR) public void sent(DataPacketSendEvent e) { packet(e.getPlayer(), e.getPacket(), "OUT", e.isCancelled()); }
     @EventHandler(priority = EventPriority.MONITOR) public void received(DataPacketReceiveEvent e) { packet(e.getPlayer(), e.getPacket(), "IN", e.isCancelled()); }
-    @EventHandler(priority = EventPriority.MONITOR) public void quit(PlayerQuitEvent e) { finish(e.getPlayer().getUniqueId(), "QUIT"); }
-    private void finish(UUID id, String reason) {
+    @EventHandler(priority = EventPriority.MONITOR) public void quit(PlayerQuitEvent e) { finish(e.getPlayer(), "QUIT"); }
+    private synchronized void finish(Player id, String reason) {
         if (id == null) return;
         Trace trace = traces.remove(id);
         if (trace == null) return;
+        if (completed.size() >= 128) completed.remove(completed.keySet().iterator().next());
+        completed.put(id, Boolean.TRUE);
         trace.add(reason);
         String snapshot = environment + trace.snapshot();
         String name = "incident-" + System.currentTimeMillis() + "-" + UUID.randomUUID() + ".zip";
@@ -95,7 +123,7 @@ public final class Main extends PluginBase implements Listener {
         }); } catch (RejectedExecutionException e) { getLogger().warning("診斷匯出佇列已滿或正在關閉，未產生報告。"); }
     }
     @Override public void onDisable() {
-        for (UUID id : List.copyOf(traces.keySet())) finish(id, "DISABLE");
+        for (Player id : activeTraces().keySet()) finish(id, "DISABLE");
         writer.shutdown();
         try { if (!writer.awaitTermination(5, TimeUnit.SECONDS)) getLogger().warning("仍有診斷報告正在寫入。"); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }

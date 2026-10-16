@@ -11,6 +11,18 @@ final class Trace {
     private final Map<String, Stats> totals = new TreeMap<>();
     private final Map<Long, Map<String, Long>> seconds = new TreeMap<>();
     private long lastIn, lastOut;
+    private final Map<String,Long> validations=new TreeMap<>();
+    private int pending;
+    synchronized void beginValidation(){pending++;}
+    synchronized void endValidation(String kind,String status,String detail){
+        validations.merge(kind+" "+status,1L,Long::sum);
+        if(!status.equals("PASS"))channels.get("validation-findings").add(row(kind+" "+status+" "+detail));
+        pending--;notifyAll();
+    }
+    synchronized void awaitValidation() throws InterruptedException {
+        long end=System.nanoTime()+2_000_000_000L;
+        while(pending>0){long remaining=end-System.nanoTime();if(remaining<=0)break;wait(Math.max(1,remaining/1_000_000));}
+    }
     private static final class Ring {
         final int cap; long dropped; final ArrayDeque<String> rows = new ArrayDeque<>();
         Ring(int cap) { this.cap=cap; }
@@ -26,6 +38,7 @@ final class Trace {
         channels.put("chunks",new Ring(512));
         channels.put("other-outgoing",new Ring(256));
         channels.put("first-packets",new Ring(64));
+        channels.put("validation-findings",new Ring(128));
     }
     static String clean(String text) {
         if(text==null)return "";
@@ -56,6 +69,8 @@ final class Trace {
     }
     synchronized String snapshot() {
         StringBuilder out=new StringBuilder("format=2\nlastIncomingElapsedMs="+lastIn+"\nlastOutgoingElapsedMs="+lastOut+"\n");
+        out.append("validationPendingAtExport=").append(pending).append("\n\n[validation-totals]\n");
+        validations.forEach((key,count)->out.append(key).append('\t').append(count).append('\n'));
         out.append("\n[packet-totals]\ntype\tcount\tcancelled\tknownPayloadBytes\tmaxKnownPayloadBytes\n");
         totals.forEach((k,v)->out.append(k).append('\t').append(v.count).append('\t').append(v.cancelled).append('\t').append(v.bytes).append('\t').append(v.maxBytes).append('\n'));
         out.append("\n[per-second-counts]\nelapsedSecond\ttype\tcount\n");

@@ -30,6 +30,8 @@ public final class Main extends PluginBase implements Listener {
     }
     private final ThreadPoolExecutor writer = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
         new ArrayBlockingQueue<>(4), r -> { Thread t = new Thread(r, "tokaDiagnostics-export"); t.setDaemon(true); return t; });
+    private final ThreadPoolExecutor validator = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+        new ArrayBlockingQueue<>(32), r -> { Thread t=new Thread(r,"tokaDiagnostics-validate");t.setDaemon(true);return t; });
     private Map<Player, Trace> activeTraces() { synchronized (traces) { return new IdentityHashMap<>(traces); } }
     private Path reports;
     private String environment;
@@ -110,6 +112,28 @@ public final class Main extends PluginBase implements Listener {
         }
         if (packet instanceof DisconnectPacket d) detail = " hideScreen=" + d.hideDisconnectionScreen;
         trace.packet(direction, packet.getClass().getSimpleName(), cancelled, knownBytes, detail);
+        if(direction.equals("OUT")&&!cancelled) {
+            if(packet instanceof LevelChunkPacket c)validate(trace,"LevelChunk",c.data,c.subChunkCount,c.dimension,"chunk="+c.chunkX+","+c.chunkZ);
+            if(packet instanceof BlockEntityDataPacket b)validate(trace,"BlockEntityNBT",b.namedTag,-1,0,"xyz="+b.x+","+b.y+","+b.z);
+            if(packet instanceof UpdateBlockPacket b){
+                trace.beginValidation();
+                String status=b.blockRuntimeId<0||b.dataLayer<0||b.dataLayer>1?"FAIL":"PASS";
+                if(status.equals("PASS")&&cn.nukkit.level.GlobalBlockPalette.getLegacyFullId(b.blockRuntimeId)<0)status="UNMAPPED_SERVER_RUNTIME";
+                trace.endValidation("UpdateBlockFields",status,"xyz="+b.x+","+b.y+","+b.z+" runtime="+b.blockRuntimeId+" layer="+b.dataLayer);
+            }
+        }
+    }
+    private void validate(Trace trace,String kind,byte[] bytes,int sections,int dimension,String where) {
+        trace.beginValidation();
+        if(bytes==null||bytes.length>262144){trace.endValidation(kind,"SKIPPED_SIZE",where+" bytes="+(bytes==null?-1:bytes.length));return;}
+        if(validator.getQueue().remainingCapacity()==0){trace.endValidation(kind,"SKIPPED_QUEUE",where);return;}
+        byte[] copy=bytes.clone();
+        try {validator.execute(()->{
+            try {
+                PayloadValidator.Result result=sections<0?PayloadValidator.nbt(copy):PayloadValidator.chunk(copy,sections,dimension,id->cn.nukkit.level.GlobalBlockPalette.getLegacyFullId(id)>=0);
+                trace.endValidation(kind,result.status(),where+" "+result.detail());
+            }catch(RuntimeException e){trace.endValidation(kind,"VALIDATOR_ERROR",where+" "+e.getClass().getSimpleName());}
+        });}catch(RejectedExecutionException e){trace.endValidation(kind,"SKIPPED_QUEUE",where);}
     }
     static String payloadSummary(byte[] data) {
         int length=data==null?0:data.length;
@@ -136,10 +160,11 @@ public final class Main extends PluginBase implements Listener {
         if (completed.size() >= 128) completed.remove(completed.keySet().iterator().next());
         completed.put(id, Boolean.TRUE);
         trace.add(reason);
-        String snapshot = environment + trace.snapshot();
         String name = "incident-" + System.currentTimeMillis() + "-" + UUID.randomUUID() + ".zip";
         try { writer.execute(() -> {
             try {
+                trace.awaitValidation();
+                String snapshot=environment+trace.snapshot();
                 Files.createDirectories(reports);
                 // Hard disk bound: refuse additional reports rather than delete existing evidence.
                 try (var files = Files.list(reports)) { if (files.filter(f -> f.toString().endsWith(".zip")).count() >= 50) throw new java.io.IOException("報告已達 50 份，請先移出舊報告"); }
@@ -153,6 +178,10 @@ public final class Main extends PluginBase implements Listener {
                         "crc32First4096 is a prefix fingerprint, not integrity validation or a full payload hash.\n"+
                         "TELEPORT_EVENT observes a request; subsequent CONTEXT confirms position.\n"+
                         "Packet events do not prove successful encoding, delivery or client acceptance.\n"+
+                        "validation-totals: PASS is structural only; FAIL reports a structural violation.\n"+
+                        "UNSUPPORTED, UNMAPPED_SERVER_RUNTIME, SKIPPED_* and VALIDATOR_ERROR are not PASS.\n"+
+                        "Validation queue: 32 entries; payload cap: 256 KiB; export waits at most 2 seconds.\n"+
+                        "validationPendingAtExport > 0 means results are incomplete. Raw payloads are not stored.\n"+
                         "No raw packets, login credentials, chat or block-entity NBT contents are saved.\n").getBytes(StandardCharsets.UTF_8));zip.closeEntry();
                 }
                 getLogger().info("診斷報告：" + path);
@@ -172,6 +201,7 @@ public final class Main extends PluginBase implements Listener {
     }
     @Override public void onDisable() {
         for (Player id : activeTraces().keySet()) finish(id, "DISABLE");
+        validator.shutdown();
         writer.shutdown();
         try { if (!writer.awaitTermination(5, TimeUnit.SECONDS)) getLogger().warning("仍有診斷報告正在寫入。"); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }

@@ -4,7 +4,7 @@ Nukkit 連線診斷插件，Java 21。協助分析客戶端 `Block` 斷線等問
 
 ## 安裝與使用
 
-將 `output/tokaDiagnostics-0.2.0.jar` 放入 plugins，移出所有舊版 tokaDiagnostics JAR，正常停止後重新啟動，避免 reload。啟動即建立 `plugins/tokaDiagnostics/reports/`，並在後台顯示絕對路徑。
+將 `output/tokaDiagnostics-0.3.0.jar` 放入 plugins，移出所有舊版 tokaDiagnostics JAR，正常停止後重新啟動，避免 reload。啟動即建立 `plugins/tokaDiagnostics/reports/`，並在後台顯示絕對路徑。
 
 **預設自動追蹤，無須搶著輸入指令。** 從第一個收送封包事件開始，不等待 UUID；同時最多兩條連線，每條自動追蹤一次、最多 120 秒。斷線、到期或插件關閉時背景匯出 ZIP。超過兩位時部分連線不會被追蹤；超過 120 秒的同一條連線不會自動延長，必要時可手動再次開始。
 
@@ -62,3 +62,18 @@ ZIP 包含 `trace.txt` 與解讀方式 `README.txt`。時間使用 UTC，另有�
 使用 Maven 與 Java 21：`mvn package`，或執行 `build.ps1`。JAR 複製到專案 output 與 plugin-modernization/output，不進版控。
 
 整體拆分只維護在 [zero 主文件](https://github.com/zisunny104/zero/blob/master/docs/ARCHITECTURE.md)。
+
+## 0.3.0：送出 payload 的結構驗證
+
+這版額外檢查送出的 LevelChunk 資料與 BlockEntityData NBT，不必先修改核心。檢查的是事件當下的 payload，不是壓縮／加密後的最終網路資料；同優先序的後續監聽器仍可能修改封包。既有 0.2.0 ZIP 沒保存原始資料，不能事後回溯驗證。
+
+- LevelChunk：subchunk v9、layer 數、連續 section Y、palette bit 寬／長度、4096 個索引是否超界、runtime 是否非負、24／8／16 組維度 biome palette、border 與後續 network NBT 邊界。
+- 方塊 palette runtime 對照正在執行的核心表；核心表缺少某 ID 會列 UNSUPPORTED，不能據此宣稱客戶端不支援。
+- UpdateBlock：runtime 非負、layer 0／1 與核心 palette 是否有對照。這只是基本欄位檢查，不代表方塊的遊戲語意正確。
+- BlockEntityData：network NBT root、長度、巢狀標籤、varint 及結尾資料邊界。不保存／輸出 NBT 內文。
+
+背景驗證使用單一執行緒，佇列最多 32 筆，每筆複製最多 256 KiB；超限明確記錄 SKIPPED_SIZE／SKIPPED_QUEUE。主執行緒不等待驗證。背景匯出最多等兩秒收齊結果，若仍有工作，`validationPendingAtExport` 會顯示未完成筆數。
+
+報告新增 `validation-totals` 與獨立的 `validation-findings`（最近 128 筆非 PASS）段落。PASS 僅代表這些結構檢查通過；FAIL 表示檢查器發現結構違規；UNSUPPORTED（格式／維度／資源預算不支援）、UNMAPPED_SERVER_RUNTIME、SKIPPED_*、VALIDATOR_ERROR 都不能當成通過。自訂維度、biome reuse 格式、其他 subchunk 版本目前不驗證。不解析 BatchPacket 內部，且不證明協定版本的完整相容性或客戶端一定接受。
+
+驗證包含七組 payload 測試：有效資料、截斷、palette 索引越界、不支援版本、NBT 邊界、section 不連續及核心表缺少 runtime；另在隔離核心用其實際 StateBlockStorage／PalettedBlockStorage 與 NBTIO 寫入器產生資料，確認背景驗證 PASS、報告等待結果完成。這是測試檢查器，不是要求正式世界另建測試服。

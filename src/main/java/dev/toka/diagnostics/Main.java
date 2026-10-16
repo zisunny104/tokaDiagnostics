@@ -29,7 +29,7 @@ public final class Main extends PluginBase implements Listener {
         getServer().getScheduler().scheduleRepeatingTask(this, () -> {
             for (var entry : traces.entrySet()) {
                 Player p = getServer().getPlayer(entry.getKey()).orElse(null);
-                if (p != null) entry.getValue().add("CONTEXT world=" + Trace.clean(p.getLevel().getFolderName()) + " xyz=" + p.getFloorX() + "," + p.getFloorY() + "," + p.getFloorZ());
+                if (p != null && p.getLevel() != null) entry.getValue().add("CONTEXT world=" + Trace.clean(p.getLevel().getFolderName()) + " xyz=" + p.getFloorX() + "," + p.getFloorY() + "," + p.getFloorZ());
                 if (System.nanoTime() >= entry.getValue().deadline) finish(entry.getKey(), "TIMEOUT");
             }
         }, 20);
@@ -40,6 +40,7 @@ public final class Main extends PluginBase implements Listener {
         Player p = getServer().getPlayerExact(a[1]);
         if (p == null) { sender.sendMessage("請指定線上的玩家；離線時已自動匯出。"); return true; }
         UUID id = p.getUniqueId();
+        if (id == null) { sender.sendMessage("玩家身分尚未初始化，請等登入完成再追蹤。"); return true; }
         switch (a[0].toLowerCase(Locale.ROOT)) {
             case "start": {
                 int seconds = 60;
@@ -59,7 +60,11 @@ public final class Main extends PluginBase implements Listener {
         return true;
     }
     private void packet(Player p, DataPacket packet, String direction, boolean cancelled) {
-        Trace trace = traces.get(p.getUniqueId());
+        // Login and failed authentication can produce events before UUID assignment.
+        if (p == null || packet == null) return;
+        UUID id = p.getUniqueId();
+        if (id == null) return;
+        Trace trace = traces.get(id);
         if (trace == null) return;
         String detail = "";
         if (packet instanceof UpdateBlockPacket b) detail = " xyz=" + b.x + "," + b.y + "," + b.z + " runtime=" + b.blockRuntimeId + " layer=" + b.dataLayer + " flags=" + b.flags;
@@ -70,6 +75,7 @@ public final class Main extends PluginBase implements Listener {
     @EventHandler(priority = EventPriority.MONITOR) public void received(DataPacketReceiveEvent e) { packet(e.getPlayer(), e.getPacket(), "IN", e.isCancelled()); }
     @EventHandler(priority = EventPriority.MONITOR) public void quit(PlayerQuitEvent e) { finish(e.getPlayer().getUniqueId(), "QUIT"); }
     private void finish(UUID id, String reason) {
+        if (id == null) return;
         Trace trace = traces.remove(id);
         if (trace == null) return;
         trace.add(reason);

@@ -6,7 +6,7 @@ core=root.parent/'Nukkit/target/nukkit-1.0-SNAPSHOT.jar'
 classes=root/'target/smoke-classes';classes.mkdir(exist_ok=True)
 subprocess.run([str(java/'javac.exe'),'-proc:none','-cp',str(core),'-d',str(classes),str(root/'tests/SmokeProbe.java')],check=True)
 run=root/'target'/('smoke-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S'));(run/'plugins').mkdir(parents=True)
-shutil.copy2(root/'output/tokaDiagnostics-0.1.0.jar',run/'plugins')
+shutil.copy2(root/'output/tokaDiagnostics-0.1.1.jar',run/'plugins')
 with zipfile.ZipFile(run/'plugins/SmokeProbe.jar','w') as jar:
  jar.write(classes/'SmokeProbe.class','SmokeProbe.class')
  jar.writestr('plugin.yml','name: SmokeProbe\nmain: SmokeProbe\nversion: test\napi: ["1.0.0"]\ndepend: [tokaDiagnostics]\n')
@@ -18,6 +18,7 @@ with (run/'console.log').open('wb') as output:
  except subprocess.TimeoutExpired:process.terminate();process.wait(timeout=15);raise RuntimeError(str(run))
 log=(run/'console.log').read_text(errors='replace')
 assert 'DIAGNOSTICS_SMOKE_PASS' in log and 'DIAGNOSTICS_SMOKE_FAIL' not in log, str(run/'console.log')
+assert 'PRELOGIN_NULL_UUID_PASS' in log, str(run/'console.log')
 reports=list((run/'plugins/tokaDiagnostics/reports').glob('*.zip'));assert len(reports)==1
 with zipfile.ZipFile(reports[0]) as z: assert 'SMOKE' in z.read('trace.txt').decode()
 print('DIAGNOSTICS_BOOT_EXPORT_PASS',run)

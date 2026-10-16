@@ -1,10 +1,12 @@
 # tokaDiagnostics
 
+0.1.1 修正登入初期 UUID 尚未建立時，收送封包事件觸發空值例外的問題；登入前事件不列入以玩家 UUID 啟動的追蹤。已以未初始化 UUID 的 Player 測試收送事件與結束追蹤，並通過隔離核心載入及匯出測試。更新時移除舊版 JAR，避免兩版同時載入。
+
 Nukkit 的限時連線診斷插件，Java 21。用來收集客戶端顯示 `Block` 等斷線問題的伺服器端線索；不保證單靠插件就能找出客戶端拒絕封包的原因。
 
 ## 使用
 
-把 `output/tokaDiagnostics-0.1.0.jar` 放入伺服器 plugins，正常重新啟動，避免使用 reload。管理權限為 `tokaDiagnostics.admin`，預設 OP；權限插件可以另行授權。
+把 `output/tokaDiagnostics-0.1.1.jar` 放入伺服器 plugins，正常重新啟動，避免使用 reload。管理權限為 `tokaDiagnostics.admin`，預設 OP；權限插件可以另行授權。
 
 ```text
 diag start zisunny104 120

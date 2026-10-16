@@ -5,6 +5,8 @@ import cn.nukkit.command.Command;
 import cn.nukkit.command.CommandSender;
 import cn.nukkit.event.*;
 import cn.nukkit.event.player.PlayerQuitEvent;
+import cn.nukkit.event.player.PlayerJoinEvent;
+import cn.nukkit.event.player.PlayerTeleportEvent;
 import cn.nukkit.event.server.*;
 import cn.nukkit.network.protocol.*;
 import cn.nukkit.plugin.PluginBase;
@@ -31,6 +33,7 @@ public final class Main extends PluginBase implements Listener {
     private Map<Player, Trace> activeTraces() { synchronized (traces) { return new IdentityHashMap<>(traces); } }
     private Path reports;
     private String environment;
+    private String coreFingerprint;
     @Override public void onEnable() {
         reports = getDataFolder().toPath().resolve("reports");
         try { Files.createDirectories(reports); }
@@ -48,7 +51,7 @@ public final class Main extends PluginBase implements Listener {
         getServer().getScheduler().scheduleRepeatingTask(this, () -> {
             for (var entry : activeTraces().entrySet()) {
                 Player p = entry.getKey();
-                if (p != null && p.getLevel() != null) entry.getValue().add("CONTEXT world=" + Trace.clean(p.getLevel().getFolderName()) + " xyz=" + p.getFloorX() + "," + p.getFloorY() + "," + p.getFloorZ());
+                if (p != null && p.getLevel() != null) entry.getValue().add("CONTEXT world=" + Trace.clean(p.getLevel().getFolderName()) + " xyz=" + p.getFloorX() + "," + p.getFloorY() + "," + p.getFloorZ() + " tick=" + getServer().getTick() + " heapUsedMiB=" + ((Runtime.getRuntime().totalMemory()-Runtime.getRuntime().freeMemory())/1048576));
                 if (System.nanoTime() >= entry.getValue().deadline) finish(entry.getKey(), "TIMEOUT");
             }
         }, 20);
@@ -93,9 +96,35 @@ public final class Main extends PluginBase implements Listener {
         Trace trace = traceFor(p);
         if (trace == null) return;
         String detail = "";
+        long knownBytes = 0;
+        if (packet instanceof LoginPacket l) detail = " protocol=" + l.getProtocol();
+        if (packet instanceof RequestNetworkSettingsPacket n) detail = " protocol=" + n.protocolVersion;
         if (packet instanceof UpdateBlockPacket b) detail = " xyz=" + b.x + "," + b.y + "," + b.z + " runtime=" + b.blockRuntimeId + " layer=" + b.dataLayer + " flags=" + b.flags;
-        if (packet instanceof LevelChunkPacket c) detail = " chunk=" + c.chunkX + "," + c.chunkZ + " dimension=" + c.dimension + " sections=" + c.subChunkCount + " bytes=" + (c.data == null ? 0 : c.data.length) + " cache=" + c.cacheEnabled;
-        trace.add(direction + " " + packet.getClass().getSimpleName() + " cancelled=" + cancelled + detail);
+        if (packet instanceof LevelChunkPacket c) {
+            knownBytes = c.data == null ? 0 : c.data.length;
+            detail = " chunk=" + c.chunkX + "," + c.chunkZ + " dimension=" + c.dimension + " sections=" + c.subChunkCount + " cache=" + c.cacheEnabled + " requestSubChunks=" + c.requestSubChunks + " blobCount=" + (c.blobIds==null?0:c.blobIds.length) + payloadSummary(c.data);
+        }
+        if (packet instanceof BlockEntityDataPacket b) {
+            knownBytes = b.namedTag == null ? 0 : b.namedTag.length;
+            detail = " xyz=" + b.x + "," + b.y + "," + b.z + payloadSummary(b.namedTag);
+        }
+        if (packet instanceof DisconnectPacket d) detail = " hideScreen=" + d.hideDisconnectionScreen;
+        trace.packet(direction, packet.getClass().getSimpleName(), cancelled, knownBytes, detail);
+    }
+    static String payloadSummary(byte[] data) {
+        int length=data==null?0:data.length;
+        CRC32 crc=new CRC32(); if(data!=null)crc.update(data,0,Math.min(length,4096));
+        return " bytes="+length+" crc32First4096="+Long.toHexString(crc.getValue());
+    }
+    private static String position(cn.nukkit.level.Location location) {
+        if(location==null)return "unknown";
+        return (location.getLevel()==null?"unknown":Trace.clean(location.getLevel().getFolderName()))+":"+location.getFloorX()+","+location.getFloorY()+","+location.getFloorZ();
+    }
+    @EventHandler(priority = EventPriority.MONITOR) public void joined(PlayerJoinEvent e) {
+        Trace trace=traceFor(e.getPlayer());if(trace!=null)trace.add("JOIN");
+    }
+    @EventHandler(priority = EventPriority.MONITOR) public void teleported(PlayerTeleportEvent e) {
+        Trace trace=traceFor(e.getPlayer());if(trace!=null)trace.add("TELEPORT_EVENT cause="+e.getCause()+" cancelled="+e.isCancelled()+" from="+position(e.getFrom())+" to="+position(e.getTo()));
     }
     @EventHandler(priority = EventPriority.MONITOR) public void sent(DataPacketSendEvent e) { packet(e.getPlayer(), e.getPacket(), "OUT", e.isCancelled()); }
     @EventHandler(priority = EventPriority.MONITOR) public void received(DataPacketReceiveEvent e) { packet(e.getPlayer(), e.getPacket(), "IN", e.isCancelled()); }
@@ -116,11 +145,30 @@ public final class Main extends PluginBase implements Listener {
                 try (var files = Files.list(reports)) { if (files.filter(f -> f.toString().endsWith(".zip")).count() >= 50) throw new java.io.IOException("報告已達 50 份，請先移出舊報告"); }
                 Path path = reports.resolve(name);
                 try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(path, StandardOpenOption.CREATE_NEW))) {
-                    zip.putNextEntry(new ZipEntry("trace.txt")); zip.write(snapshot.getBytes(StandardCharsets.UTF_8)); zip.closeEntry();
+                    zip.putNextEntry(new ZipEntry("trace.txt")); zip.write((coreFingerprint()+snapshot).getBytes(StandardCharsets.UTF_8)); zip.closeEntry();
+                    zip.putNextEntry(new ZipEntry("README.txt"));
+                    zip.write(("Format 2: independent lifecycle, incoming, blocks, block-entities, chunks and other-outgoing buffers.\n"+
+                        "dropped applies only to its channel; packet totals cover the whole trace. Per-second counts retain up to 301 seconds.\n"+
+                        "knownPayloadBytes counts only chunk data and block-entity NBT, not encoded/wire bytes.\n"+
+                        "crc32First4096 is a prefix fingerprint, not integrity validation or a full payload hash.\n"+
+                        "TELEPORT_EVENT observes a request; subsequent CONTEXT confirms position.\n"+
+                        "Packet events do not prove successful encoding, delivery or client acceptance.\n"+
+                        "No raw packets, login credentials, chat or block-entity NBT contents are saved.\n").getBytes(StandardCharsets.UTF_8));zip.closeEntry();
                 }
                 getLogger().info("診斷報告：" + path);
             } catch (Exception e) { getLogger().error("診斷匯出失敗", e); }
         }); } catch (RejectedExecutionException e) { getLogger().warning("診斷匯出佇列已滿或正在關閉，未產生報告。"); }
+    }
+    // Only the single export worker invokes this; never hash a JAR on the packet/main thread.
+    private String coreFingerprint() {
+        if(coreFingerprint!=null)return coreFingerprint;
+        try {
+            Path core=Paths.get(getServer().getClass().getProtectionDomain().getCodeSource().getLocation().toURI());
+            if(!Files.isRegularFile(core))return coreFingerprint="coreJarOnDiskSha256=unavailable-directory\n";
+            var digest=java.security.MessageDigest.getInstance("SHA-256");
+            try(var input=Files.newInputStream(core)) {byte[] block=new byte[65536];int count;while((count=input.read(block))!=-1)digest.update(block,0,count);}
+            return coreFingerprint="coreJarOnDiskSha256="+HexFormat.of().formatHex(digest.digest())+"\n";
+        }catch(Exception e){return coreFingerprint="coreJarOnDiskSha256=unavailable-"+e.getClass().getSimpleName()+"\n";}
     }
     @Override public void onDisable() {
         for (Player id : activeTraces().keySet()) finish(id, "DISABLE");

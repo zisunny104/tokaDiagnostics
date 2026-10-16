@@ -6,7 +6,7 @@ core=root.parent/'Nukkit/target/nukkit-1.0-SNAPSHOT.jar'
 classes=root/'target/smoke-classes';classes.mkdir(exist_ok=True)
 subprocess.run([str(java/'javac.exe'),'-proc:none','-cp',str(core),'-d',str(classes),str(root/'tests/SmokeProbe.java')],check=True)
 run=root/'target'/('smoke-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S'));(run/'plugins').mkdir(parents=True)
-shutil.copy2(root/'output/tokaDiagnostics-0.1.3.jar',run/'plugins')
+shutil.copy2(root/'output/tokaDiagnostics-0.2.0.jar',run/'plugins')
 with zipfile.ZipFile(run/'plugins/SmokeProbe.jar','w') as jar:
  jar.write(classes/'SmokeProbe.class','SmokeProbe.class')
  jar.writestr('plugin.yml','name: SmokeProbe\nmain: SmokeProbe\nversion: test\napi: ["1.0.0"]\ndepend: [tokaDiagnostics]\n')
@@ -23,4 +23,7 @@ reports=list((run/'plugins/tokaDiagnostics/reports').glob('*.zip'));assert len(r
 for report in reports:
  with zipfile.ZipFile(report) as z:
   trace=z.read('trace.txt').decode();assert 'SMOKE' in trace and 'AUTO_START' in trace and 'LoginPacket' in trace
+  assert 'format=2' in trace and '[packet-totals]' in trace and '[lifecycle] dropped=0' in trace
+  assert 'crc32First4096' in trace or 'protocol=' in trace
+  assert 'coreJarOnDiskSha256=' in trace and 'README.txt' in z.namelist()
 print('DIAGNOSTICS_BOOT_EXPORT_PASS',run)

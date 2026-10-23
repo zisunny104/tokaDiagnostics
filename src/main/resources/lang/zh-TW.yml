@@ -1,0 +1,26 @@
+status:
+  line: "§b診斷 §a${0}§b 追蹤中 §a${1}§b/§a2§b 待寫入 §a${2}"
+  path: "§b報告路徑 §a${0}"
+  auto: "§b自動追蹤已開，每條連線一次、120 秒、最多兩位"
+help:
+  - "§b/diag status §7看狀態"
+  - "§b/diag start <玩家> [秒] §7追蹤 10 至 300 秒"
+  - "§b/diag mark <玩家> <標記> §7加標記，別輸入密碼"
+  - "§b/diag export <玩家> §7立即匯出報告"
+cmd:
+  offline: "§e玩家不在線。先 /diag start，斷線時才會自動匯出"
+  seconds: "§e秒數必須是 10 至 300"
+  limit: "§e限 10 至 300 秒、最多兩位，舊追蹤請先匯出"
+  started: "§a追蹤已開始，斷線或到期自動匯出"
+  no_trace: "§e尚未開始追蹤"
+  marked: "§a已加入標記"
+  no_data: "§e${0} 尚未追蹤，請先 /diag start ${0} 120"
+  exported: "§a已提交匯出，看後台的報告路徑"
+log:
+  folder: "§c無法建立報告資料夾 §a${0}§c，插件停用"
+  ready: "§b診斷已就緒 報告路徑 §a${0}§b 自動追蹤最多兩位各 §a120§b 秒"
+  full: "報告已達 50 份，請先移出舊報告"
+  report: "§b診斷報告 §a${0}"
+  export_failed: "§c診斷匯出失敗 §a${0}"
+  queue_full: "§e匯出佇列已滿或正在關閉，未產生報告"
+  still_writing: "§e仍有報告正在寫入"

@@ -1,0 +1,26 @@
+status:
+  line: "§bDiagnostics §a${0}§b tracing §a${1}§b/§a2§b queued §a${2}"
+  path: "§bReports at §a${0}"
+  auto: "§bAuto trace is on: once per connection, 120 s, two players at most"
+help:
+  - "§b/diag status §7show state"
+  - "§b/diag start <player> [seconds] §7trace for 10 to 300 s"
+  - "§b/diag mark <player> <text> §7add a mark, no passwords"
+  - "§b/diag export <player> §7export the report now"
+cmd:
+  offline: "§ePlayer is offline. Run /diag start first; the report is exported at disconnect"
+  seconds: "§eSeconds must be 10 to 300"
+  limit: "§eLimit 10 to 300 s and two players; export the old trace first"
+  started: "§aTrace started, exported at disconnect or expiry"
+  no_trace: "§eNo trace yet"
+  marked: "§aMark added"
+  no_data: "§e${0} is not traced; run /diag start ${0} 120 first"
+  exported: "§aExport queued, see the report path in the console"
+log:
+  folder: "§cCannot create the report folder §a${0}§c, plugin disabled"
+  ready: "§bDiagnostics ready, reports at §a${0}§b, auto trace two players for §a120§b s"
+  full: "Already 50 reports, move the old ones out"
+  report: "§bDiagnostic report §a${0}"
+  export_failed: "§cExport failed §a${0}"
+  queue_full: "§eExport queue full or closing, no report written"
+  still_writing: "§eA report is still being written"

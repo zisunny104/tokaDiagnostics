@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.zip.*;
+import dev.toka.i18n.Messages;
 
 public final class Main extends PluginBase implements Listener {
     private final Map<Player, Trace> traces = Collections.synchronizedMap(new IdentityHashMap<>());
@@ -30,28 +31,37 @@ public final class Main extends PluginBase implements Listener {
         traces.put(player, trace);
         return trace;
     }
-    private final ThreadPoolExecutor writer = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
-        new ArrayBlockingQueue<>(4), r -> { Thread t = new Thread(r, "tokaDiagnostics-export"); t.setDaemon(true); return t; });
-    private final ThreadPoolExecutor validator = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
-        new ArrayBlockingQueue<>(32), r -> { Thread t=new Thread(r,"tokaDiagnostics-validate");t.setDaemon(true);return t; });
+    // Created in onEnable: a shut-down executor cannot be reused, so a re-enable needs fresh ones.
+    private ThreadPoolExecutor writer;
+    private ThreadPoolExecutor validator;
+    private Messages messages;
+    private String text(String key, Object... args) { return messages.text(key, args); }
     private Map<Player, Trace> activeTraces() { synchronized (traces) { return new IdentityHashMap<>(traces); } }
     private Path reports;
     private String environment;
     private String coreFingerprint;
     @Override public void onEnable() {
+        messages = new Messages(getClass().getClassLoader(), getDataFolder().toPath(), "zh-TW", line -> getLogger().warning(line));
+        traces.clear();
+        completed.clear();
+        coreFingerprint = null;
+        writer = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(4), r -> { Thread t = new Thread(r, "tokaDiagnostics-export"); t.setDaemon(true); return t; });
+        validator = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(32), r -> { Thread t=new Thread(r,"tokaDiagnostics-validate");t.setDaemon(true);return t; });
         suggest("diag",
-            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"status"})},
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"status", "help"})},
             new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"start"}), CommandParameter.newType("玩家", CommandParamType.TARGET), CommandParameter.newType("秒數", true, CommandParamType.INT)},
             new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"mark"}), CommandParameter.newType("玩家", CommandParamType.TARGET), CommandParameter.newType("標記", true, CommandParamType.RAWTEXT)},
             new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"export"}), CommandParameter.newType("玩家", CommandParamType.TARGET)});
         reports = getDataFolder().toPath().resolve("reports");
         try { Files.createDirectories(reports); }
         catch (java.io.IOException e) {
-            getLogger().error("無法建立診斷報告資料夾，插件停用：" + reports.toAbsolutePath(), e);
+            getLogger().error(text("log.folder", reports.toAbsolutePath()), e);
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
-        getLogger().info("診斷工具已就緒，報告路徑：" + reports.toAbsolutePath() + "；自動追蹤登入連線已啟用（最多兩位、每次 120 秒）。");
+        getLogger().info(text("log.ready", reports.toAbsolutePath()));
         environment = "core=" + getServer().getVersion() + "\njava=" + System.getProperty("java.version") + "\nplugins=" +
             getServer().getPluginManager().getPlugins().values().stream().map(p -> p.getName() + ":" + p.getDescription().getVersion()).sorted().toList() +
             "\nPacket events are observations, not proof of delivery. No raw payloads captured.\n";
@@ -73,33 +83,37 @@ public final class Main extends PluginBase implements Listener {
     }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] a) {
         if (!sender.hasPermission("tokaDiagnostics.admin")) return true;
+        if (a.length > 0 && a[0].equalsIgnoreCase("help")) {
+            for (String line : messages.lines("help")) sender.sendMessage(line);
+            return true;
+        }
         if (a.length == 0 || a[0].equalsIgnoreCase("status")) {
-            sender.sendMessage("診斷 " + getDescription().getVersion() + "；追蹤中：" + traces.size() + "/2；待寫入：" + writer.getQueue().size());
-            sender.sendMessage("報告路徑：" + reports.toAbsolutePath());
-            sender.sendMessage("自動追蹤：開啟；每條連線一次、120 秒、同時最多兩位。diag start 可手動再次追蹤。");
+            sender.sendMessage(text("status.line", getDescription().getVersion(), traces.size(), writer.getQueue().size()));
+            sender.sendMessage(text("status.path", reports.toAbsolutePath()));
+            sender.sendMessage(text("status.auto"));
             return true;
         }
         if (a.length < 2) return false;
         Player p = getServer().getPlayerExact(a[1]);
-        if (p == null) { sender.sendMessage("玩家不在線。只有先啟動追蹤才會在斷線時自動匯出；請檢查 reports 或登入後先執行 diag start。"); return true; }
+        if (p == null) { sender.sendMessage(text("cmd.offline")); return true; }
         Player id = p;
 
         switch (a[0].toLowerCase(Locale.ROOT)) {
             case "start": {
                 int seconds = 60;
-                try { if (a.length > 2) seconds = Integer.parseInt(a[2]); } catch (NumberFormatException e) { sender.sendMessage("秒數必須是 10–300。"); return true; }
-                if (seconds < 10 || seconds > 300 || traces.size() >= 2 || traces.containsKey(id)) { sender.sendMessage("限 10–300 秒，同時最多兩位，既有追蹤請先匯出。"); return true; }
+                try { if (a.length > 2) seconds = Integer.parseInt(a[2]); } catch (NumberFormatException e) { sender.sendMessage(text("cmd.seconds")); return true; }
+                if (seconds < 10 || seconds > 300 || traces.size() >= 2 || traces.containsKey(id)) { sender.sendMessage(text("cmd.limit")); return true; }
                 Trace trace = new Trace(2048, System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds));
-                trace.add("START"); traces.put(id, trace); sender.sendMessage("追蹤已開始；斷線或到期自動匯出。"); break;
+                trace.add("START"); traces.put(id, trace); sender.sendMessage(text("cmd.started")); break;
             }
             case "mark": {
                 Trace trace = traces.get(id);
                 if (trace != null) trace.add("MARK " + String.join(" ", Arrays.copyOfRange(a, 2, a.length)));
-                sender.sendMessage(trace == null ? "尚未開始追蹤。" : "已加入標記（請勿輸入密碼）。"); break;
+                sender.sendMessage(text(trace == null ? "cmd.no_trace" : "cmd.marked")); break;
             }
             case "export":
-                if (!traces.containsKey(id)) sender.sendMessage("這位玩家尚未開始追蹤，沒有資料可匯出。請先 diag start " + p.getName() + " 120。");
-                else { finish(id, "MANUAL"); sender.sendMessage("已提交匯出；請查看後台的報告路徑。"); }
+                if (!traces.containsKey(id)) sender.sendMessage(text("cmd.no_data", p.getName()));
+                else { finish(id, "MANUAL"); sender.sendMessage(text("cmd.exported")); }
                 break;
             default: return false;
         }
@@ -180,7 +194,7 @@ public final class Main extends PluginBase implements Listener {
                 String snapshot=environment+trace.snapshot();
                 Files.createDirectories(reports);
                 // Hard disk bound: refuse additional reports rather than delete existing evidence.
-                try (var files = Files.list(reports)) { if (files.filter(f -> f.toString().endsWith(".zip")).count() >= 50) throw new java.io.IOException("報告已達 50 份，請先移出舊報告"); }
+                try (var files = Files.list(reports)) { if (files.filter(f -> f.toString().endsWith(".zip")).count() >= 50) throw new java.io.IOException(text("log.full")); }
                 Path path = reports.resolve(name);
                 try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(path, StandardOpenOption.CREATE_NEW))) {
                     zip.putNextEntry(new ZipEntry("trace.txt")); zip.write((coreFingerprint()+snapshot).getBytes(StandardCharsets.UTF_8)); zip.closeEntry();
@@ -197,9 +211,9 @@ public final class Main extends PluginBase implements Listener {
                         "validationPendingAtExport > 0 means results are incomplete. Raw payloads are not stored.\n"+
                         "No raw packets, login credentials, chat or block-entity NBT contents are saved.\n").getBytes(StandardCharsets.UTF_8));zip.closeEntry();
                 }
-                getLogger().info("診斷報告：" + path);
-            } catch (Exception e) { getLogger().error("診斷匯出失敗", e); }
-        }); } catch (RejectedExecutionException e) { getLogger().warning("診斷匯出佇列已滿或正在關閉，未產生報告。"); }
+                getLogger().info(text("log.report", path));
+            } catch (Exception e) { getLogger().error(text("log.export_failed", e.getClass().getSimpleName()), e); }
+        }); } catch (RejectedExecutionException e) { getLogger().warning(text("log.queue_full")); }
     }
     // Only the single export worker invokes this; never hash a JAR on the packet/main thread.
     private String coreFingerprint() {
@@ -213,9 +227,10 @@ public final class Main extends PluginBase implements Listener {
         }catch(Exception e){return coreFingerprint="coreJarOnDiskSha256=unavailable-"+e.getClass().getSimpleName()+"\n";}
     }
     @Override public void onDisable() {
+        if (writer == null) return;
         for (Player id : activeTraces().keySet()) finish(id, "DISABLE");
         validator.shutdown();
         writer.shutdown();
-        try { if (!writer.awaitTermination(5, TimeUnit.SECONDS)) getLogger().warning("仍有診斷報告正在寫入。"); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { if (!writer.awaitTermination(5, TimeUnit.SECONDS)) getLogger().warning(text("log.still_writing")); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 }

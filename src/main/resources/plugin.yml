@@ -1,6 +1,6 @@
 name: tokaDiagnostics
 main: dev.toka.diagnostics.Main
-version: 0.3.0
+version: "0.3.1"
 api: ["1.0.0"]
 author: zisunny104
 commands:

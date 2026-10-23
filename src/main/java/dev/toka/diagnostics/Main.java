@@ -3,6 +3,8 @@ package dev.toka.diagnostics;
 import cn.nukkit.Player;
 import cn.nukkit.command.Command;
 import cn.nukkit.command.CommandSender;
+import cn.nukkit.command.data.CommandParameter;
+import cn.nukkit.command.data.CommandParamType;
 import cn.nukkit.event.*;
 import cn.nukkit.event.player.PlayerQuitEvent;
 import cn.nukkit.event.player.PlayerJoinEvent;
@@ -37,6 +39,11 @@ public final class Main extends PluginBase implements Listener {
     private String environment;
     private String coreFingerprint;
     @Override public void onEnable() {
+        suggest("diag",
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"status"})},
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"start"}), CommandParameter.newType("玩家", CommandParamType.TARGET), CommandParameter.newType("秒數", true, CommandParamType.INT)},
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"mark"}), CommandParameter.newType("玩家", CommandParamType.TARGET), CommandParameter.newType("標記", true, CommandParamType.RAWTEXT)},
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"export"}), CommandParameter.newType("玩家", CommandParamType.TARGET)});
         reports = getDataFolder().toPath().resolve("reports");
         try { Files.createDirectories(reports); }
         catch (java.io.IOException e) {
@@ -57,6 +64,12 @@ public final class Main extends PluginBase implements Listener {
                 if (System.nanoTime() >= entry.getValue().deadline) finish(entry.getKey(), "TIMEOUT");
             }
         }, 20);
+    }
+    private void suggest(String name, CommandParameter[]... forms) {
+        Command registered = (Command) getCommand(name);
+        if (registered == null) return;
+        registered.getCommandParameters().clear();
+        for (int i = 0; i < forms.length; i++) registered.addCommandParameters("choice" + i, forms[i]);
     }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] a) {
         if (!sender.hasPermission("tokaDiagnostics.admin")) return true;

@@ -61,7 +61,7 @@ ZIP 包含 `trace.txt` 與解讀方式 `README.txt`。時間使用 UTC，另有�
 
 使用 Maven 與 Java 21：`mvn package`，或執行 `build.ps1`。JAR 複製到專案 output 與 plugin-modernization/output，不進版控。
 
-整體拆分只維護在 [zero 主文件](https://github.com/zisunny104/zero/blob/master/docs/ARCHITECTURE.md)。
+整體拆分只維護在 [架構主文件](https://github.com/zisunny104/zero/blob/master/docs/ARCHITECTURE.md)。
 
 ## 送出資料 payload 的結構驗證
 

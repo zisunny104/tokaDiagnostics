@@ -1,13 +1,13 @@
 name: tokaDiagnostics
 main: dev.toka.diagnostics.Main
-version: "0.3.2"
+version: "0.3.3"
 api: ["1.0.0"]
 author: zisunny104
 commands:
   diag:
     description: 限時連線診斷
     permission: tokaDiagnostics.admin
-    usage: "/diag help | status | start <玩家> [秒] | mark <玩家> <標記> | export <玩家>"
+    usage: "/diag help [頁] | ui | status | start <玩家> [秒] | mark <玩家> <標記> | export <玩家>"
 permissions:
   tokaDiagnostics.admin:
     default: op

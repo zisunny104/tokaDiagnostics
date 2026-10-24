@@ -35,6 +35,7 @@ public final class Main extends PluginBase implements Listener {
     private ThreadPoolExecutor writer;
     private ThreadPoolExecutor validator;
     private Messages messages;
+    private UiGuide guide;
     private String text(String key, Object... args) { return messages.text(key, args); }
     private Map<Player, Trace> activeTraces() { synchronized (traces) { return new IdentityHashMap<>(traces); } }
     private Path reports;
@@ -42,6 +43,7 @@ public final class Main extends PluginBase implements Listener {
     private String coreFingerprint;
     @Override public void onEnable() {
         messages = new Messages(getClass().getClassLoader(), getDataFolder().toPath(), "zh-TW", line -> getLogger().warning(line));
+        guide = new UiGuide(messages);
         traces.clear();
         completed.clear();
         coreFingerprint = null;
@@ -50,7 +52,8 @@ public final class Main extends PluginBase implements Listener {
         validator = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32), r -> { Thread t=new Thread(r,"tokaDiagnostics-validate");t.setDaemon(true);return t; });
         suggest("diag",
-            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"status", "help"})},
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"status", "help", "ui"})},
+            new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"help"}), CommandParameter.newType("頁", true, CommandParamType.INT)},
             new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"start"}), CommandParameter.newType("玩家", CommandParamType.TARGET), CommandParameter.newType("秒數", true, CommandParamType.INT)},
             new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"mark"}), CommandParameter.newType("玩家", CommandParamType.TARGET), CommandParameter.newType("標記", true, CommandParamType.RAWTEXT)},
             new CommandParameter[]{CommandParameter.newEnum("動作", new String[]{"export"}), CommandParameter.newType("玩家", CommandParamType.TARGET)});
@@ -66,6 +69,7 @@ public final class Main extends PluginBase implements Listener {
             getServer().getPluginManager().getPlugins().values().stream().map(p -> p.getName() + ":" + p.getDescription().getVersion()).sorted().toList() +
             "\nPacket events are observations, not proof of delivery. No raw payloads captured.\n";
         getServer().getPluginManager().registerEvents(this, this);
+        getServer().getPluginManager().registerEvents(guide.ui(), this);
         for (Player player : getServer().getOnlinePlayers().values()) traceFor(player);
         getServer().getScheduler().scheduleRepeatingTask(this, () -> {
             for (var entry : activeTraces().entrySet()) {
@@ -84,7 +88,17 @@ public final class Main extends PluginBase implements Listener {
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] a) {
         if (!sender.hasPermission("tokaDiagnostics.admin")) return true;
         if (a.length > 0 && a[0].equalsIgnoreCase("help")) {
-            for (String line : messages.lines("help")) sender.sendMessage(line);
+            int page = 1;
+            if (a.length > 1) try { page = Integer.parseInt(a[1]); } catch (NumberFormatException first) { page = 1; }
+            var lines = messages.lines("help");
+            int pages = Math.max(1, (lines.size() + 3) / 4);
+            page = Math.max(1, Math.min(page, pages));
+            sender.sendMessage(text("helpHead", page, pages));
+            for (String line : lines.subList((page - 1) * 4, Math.min(lines.size(), page * 4))) sender.sendMessage(line);
+            return true;
+        }
+        if (a.length > 0 && a[0].equalsIgnoreCase("ui")) {
+            if (sender instanceof Player self) guide.open(self); else sender.sendMessage(text("cmd.playerOnly"));
             return true;
         }
         if (a.length == 0 || a[0].equalsIgnoreCase("status")) {

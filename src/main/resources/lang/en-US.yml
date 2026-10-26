@@ -31,7 +31,7 @@ ui:
   title: "Form types"
   close: "§cClose"
   back: "Back"
-  try: "§bOpen example"
+  try: "Open example"
   kind:
     simple: "Button form"
     image: "Icon buttons"
@@ -48,7 +48,7 @@ ex:
   title: "Example"
   simpleBody: "Body uses the default colour"
   imageBody: "Two icon sources"
-  function: "§bFunction button"
+  function: "Function button"
   byPath: "Texture path"
   byUrl: "Web image"
   input: "Input"

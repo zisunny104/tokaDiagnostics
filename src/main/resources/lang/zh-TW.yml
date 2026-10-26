@@ -31,7 +31,7 @@ ui:
   title: "表單類型說明"
   close: "§c關閉"
   back: "返回"
-  try: "§b開啟範例"
+  try: "開啟範例"
   kind:
     simple: "按鈕表單"
     image: "圖示按鈕"
@@ -48,7 +48,7 @@ ex:
   title: "範例"
   simpleBody: "內文用預設顏色"
   imageBody: "兩種圖示來源"
-  function: "§b功能按鈕"
+  function: "功能按鈕"
   byPath: "材質路徑"
   byUrl: "網址圖片"
   input: "輸入框"

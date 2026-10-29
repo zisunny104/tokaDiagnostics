@@ -10,7 +10,7 @@ help:
   - "§b/diag ui §7表單類型說明，只能在遊戲內開"
 cmd:
   playerOnly: "§e只能在遊戲內使用"
-  offline: "§e玩家不在線。先 /diag start，斷線時才會自動匯出"
+  offline: "§e玩家不在線上。先 /diag start，斷線時才會自動匯出"
   seconds: "§e秒數必須是 10 至 300"
   limit: "§e限 10 至 300 秒、最多兩位，舊追蹤請先匯出"
   started: "§a追蹤已開始，斷線或到期自動匯出"

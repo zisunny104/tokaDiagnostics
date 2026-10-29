@@ -15,7 +15,7 @@ diag mark zisunny104 before-teleport
 diag export zisunny104
 ```
 
-遊戲內加 `/`；管理權限為 `tokaDiagnostics.admin`，預設 OP，也可透過權限插件授權。手動 start 的秒數為 10–300，對象必須在線。標記請勿輸入密碼或機密。
+遊戲內加 `/`；管理權限為 `tokaDiagnostics.admin`，預設 OP，也可透過權限插件授權。手動 start 的秒數為 10–300，對象必須在線上。標記請勿輸入密碼或機密。
 
 ## 報告格式
 
